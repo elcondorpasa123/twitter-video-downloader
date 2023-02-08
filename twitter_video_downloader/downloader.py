@@ -1,4 +1,6 @@
 import os
+import operator
+from collections import namedtuple
 import logging
 import argparse
 import requests
@@ -38,53 +40,64 @@ def check_updates():
         # ignore if the program is up-to-date
         pass
     else:
-        print(f"[UPDATE] A new release is available ({response['tag_name']}). Run 'pip install --force-reinstall --no-deps git+git://github.com/rly0nheart/twitter-video-downloader' to get the updates.")
+        print(
+            f"[UPDATE] A new release is available ({response['tag_name']}). Run 'pip install --force-reinstall --no-deps git+git://github.com/rly0nheart/twitter-video-downloader' to get the updates.")
 
 
 class TwitterVideoDownloader:
     def __init__(self):
-        # create argument parser
-        parser = argparse.ArgumentParser(description="twitter-video-downloader — by Richard Mwewa  | https://about.me/rly0nheart")
-        parser.add_argument("url", help="twitter video url (eg. https://twitter.com/i/status/0101011010010101101")
-        parser.add_argument("-q", "--quality", help="choose video quality (default: %(default)s)", choices=["576x1024", "480x652"], default="320x568")
-        parser.add_argument("-d", "--debug", help="enable debug mode", action='store_true')
-        self.args = parser.parse_args()
-        if self.args.debug:
-            logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%H:%M:%S%p', level=logging.DEBUG)
+        # create argument parser)
         # set selenium to --headless (hides the firefox browser)
-        option = webdriver.FirefoxOptions()
+        option = webdriver.ChromeOptions()
         option.add_argument("--headless")
-        self.driver = webdriver.Firefox(options=option)
+        self.driver = webdriver.Chrome(options=option)
         self.download_endpoint = "https://twittervideodownloader.com"
 
     # select video quality
     # returns xpath_element
     def video_quality(self):
-        if self.args.quality == "480x652":
-            xpath_element = "/html/body/div[2]/div/center/div[7]/div[1]/a"
-        elif self.args.quality == "576x1024":
-            xpath_element = "/html/body/div[2]/div/center/div[6]/div[1]/a"
-        else:
-            xpath_element = "/html/body/div[2]/div/center/div[5]/div[1]/a"
-
+        xpath_element = "/html/body/div[2]/div/center/div[5]/div[1]/a"
         return xpath_element
 
     # download video
-    def download_video(self):
+    def download_video(self, url):
         path_finder()
-        print(f"Started downloader with {self.args.url}")
+        print(f"Started downloader with {url}")
         self.driver.get(self.download_endpoint)
         url_entry_field = self.driver.find_element(By.NAME, "tweet")
-        url_entry_field.send_keys(self.args.url)
+        url_entry_field.send_keys(url)
         url_entry_field.send_keys(Keys.ENTER)
         print("Loading web resource, please wait..")
-        download_btn = WebDriverWait(self.driver, 20).until(expected_conditions.presence_of_element_located((By.XPATH, self.video_quality())))
-        video_url = download_btn.get_attribute('href')
+        download_btn = WebDriverWait(self.driver, 20).until(
+            expected_conditions.presence_of_element_located((By.XPATH, "/html/body/div[2]/div/center/div[5]/div[1]/a")))
 
+        hrefs = self.driver.find_elements(By.XPATH, "/html/body/div[2]/div/center/div[@class='row']/div[1]/a")
+        qualities = self.driver.find_elements(By.XPATH, "/html/body/div[2]/div/center/div[@class='row']/div[2]/p")
+        assert hrefs and "cannot find hrefs"
+        assert qualities and "cannot find qualities"
+        assert len(hrefs) == len(qualities) and "qualities count not equal to hrefs"
+        hrefs = [i.get_attribute("href") for i in hrefs]
+        qualities = [i.text for i in qualities]
+
+        Links = namedtuple("Links", ['width', 'height', "area", "href"])
+        links = []
+        for i in range(len(hrefs)):
+            w, h = qualities[i].split(':')[0].strip().split('x')
+            w = int(w)
+            h = int(h)
+            links.append(Links(w, h, w * h, hrefs[i]))
+        links.sort(key=operator.itemgetter(2), reverse=True)
+        print(links)
+
+        video_url = links[0].href
+        save_name = "_".join(url[url.find("://") + 3:].split("/")[1:])
+        save_dir = "./twitter_downloads"
+        if not os.path.isdir(save_dir):
+            os.makedirs(save_dir)
         with requests.get(video_url, stream=True) as response:
             response.raise_for_status()
-            with open(os.path.join("twitter_downloads", f"{self.args.url[29:]}.mp4"), 'wb') as file:
+            with open(os.path.join(save_dir, f"{save_name}.mp4"), 'wb') as file:
                 for chunk in tqdm(response.iter_content(chunk_size=8192), desc=f"Downloading {file.name}"):
                     file.write(chunk)
-                print(f"{self.args.quality} Downloaded:", file.name)
+                print(f"Downloaded:", file.name)
         self.driver.close()
